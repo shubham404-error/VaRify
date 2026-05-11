@@ -286,10 +286,12 @@ def plot_distribution(returns: pd.Series, var_pct: float, cvar_pct: float,
     """Normal distribution + histogram with VaR cutoff."""
     r = returns.values
     mu, sigma = r.mean(), r.std()
-    x_min, x_max = mu - 4.5 * sigma, mu + 4.5 * sigma
-    x_range = np.linspace(x_min, x_max, 400)
-    pdf_vals = stats.norm.pdf(x_range, mu, sigma)
     cutoff = -var_pct
+    # Ensure x_range always covers the cutoff even at extreme confidence levels
+    x_min = min(mu - 4.5 * sigma, cutoff - 0.5 * sigma)
+    x_max = mu + 4.5 * sigma
+    x_range = np.linspace(x_min, x_max, 500)
+    pdf_vals = stats.norm.pdf(x_range, mu, sigma)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -313,18 +315,27 @@ def plot_distribution(returns: pd.Series, var_pct: float, cvar_pct: float,
         fillcolor=COLORS["dist_fill"],
     ), secondary_y=False)
 
-    # Shaded tail
+    # Shaded tail — guard against empty array at extreme confidence levels
     x_tail = x_range[x_range <= cutoff]
-    y_tail = stats.norm.pdf(x_tail, mu, sigma)
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([[x_tail[0]], x_tail, [x_tail[-1]]]),
-        y=np.concatenate([[0], y_tail, [0]]),
-        fill="toself",
-        fillcolor=COLORS["tail_fill"],
-        line=dict(width=0),
-        name=f"Loss tail ({(1-conf)*100:.0f}%)",
-        showlegend=True,
-    ), secondary_y=False)
+    if len(x_tail) >= 2:
+        y_tail = stats.norm.pdf(x_tail, mu, sigma)
+        fig.add_trace(go.Scatter(
+            x=np.concatenate([[x_tail[0]], x_tail, [x_tail[-1]]]),
+            y=np.concatenate([[0], y_tail, [0]]),
+            fill="toself",
+            fillcolor=COLORS["tail_fill"],
+            line=dict(width=0),
+            name=f"Loss tail ({(1-conf)*100:.0f}%)",
+            showlegend=True,
+        ), secondary_y=False)
+    else:
+        fig.add_trace(go.Scatter(
+            x=[cutoff], y=[0],
+            mode="markers",
+            marker=dict(size=0, opacity=0),
+            name=f"Loss tail ({(1-conf)*100:.0f}%)",
+            showlegend=True,
+        ), secondary_y=False)
 
     # VaR cutoff line
     fig.add_vline(
@@ -611,7 +622,13 @@ with st.sidebar:
     conf_label = st.selectbox("Confidence level", list(conf_opts.keys()), index=1)
     conf = conf_opts[conf_label]
 
-    horizon = st.slider("Holding period (days)", 1, 30, 1)
+    horizon_opts = {
+        "1 day": 1, "5 days (1W)": 5, "10 days (2W)": 10,
+        "21 days (1M)": 21, "63 days (3M)": 63,
+        "126 days (6M)": 126, "189 days (9M)": 189, "252 days (1Y)": 252,
+    }
+    horizon_label = st.selectbox("Holding period", list(horizon_opts.keys()), index=0)
+    horizon = horizon_opts[horizon_label]
 
     lookback_opts = {"1 Year": 252, "2 Years": 504, "3 Years": 756, "5 Years": 1260}
     lookback_label = st.selectbox("Historical lookback", list(lookback_opts.keys()), index=0)
@@ -636,7 +653,7 @@ st.markdown(
     f"**{country}** &nbsp;|&nbsp; "
     f"**{', '.join(selected_symbols)}** &nbsp;|&nbsp; "
     f"Conf: **{conf_label}** &nbsp;|&nbsp; "
-    f"Horizon: **{horizon}d** &nbsp;|&nbsp; "
+    f"Horizon: **{horizon_label}** &nbsp;|&nbsp; "
     f"Method: **{method}**"
 )
 st.markdown("---")
